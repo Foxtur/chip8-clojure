@@ -1,9 +1,14 @@
-(ns chip8.core)
+(ns chip8.core
+  (:require [clojure.java.io :as io]))
 
-(defn- copy-to-array!
+(defn- copy-vec-to-array!
   [src-vec dest offset]
   (let [src-arr (byte-array src-vec)] ; Convert vector to temp array
     (System/arraycopy src-arr 0 dest offset (count src-vec))))
+
+(defn- copy-to-array!
+  [src dest offset]
+  (System/arraycopy src 0 dest offset (count src)))
 
 (def font-set
   [0xF0 0x90 0x90 0x90 0xF0 ;; 0
@@ -29,7 +34,7 @@
    into memory at location 0x00"
   [cpu]
   (let [memory (:memory cpu)]
-    (copy-to-array! font-set memory 0)
+    (copy-vec-to-array! font-set memory 0)
     cpu))
 
 ;; The Chip-8 has
@@ -43,15 +48,23 @@
 
 (defn init-cpu []
   (-> {:memory (byte-array 4096)
-             :v (vec (repeat 16 0)) ;; 16 registers initialized to 0
-             :i 0 ;; Index register
-             :pc 0x200 ;; Programs start at 0x200
-             :stack []
-             :delay 0
-             :sound 0
-             :display (vec (repeat (* 64 32) 0)) ;; Flat vector for the screen
-             :keypad (set nil)} ;; currently pressed keys
+       :v (vec (repeat 16 0)) ;; 16 registers initialized to 0
+       :i 0 ;; Index register
+       :pc 0x200 ;; Programs start at 0x200
+       :stack []
+       :delay 0
+       :sound 0
+       :display (vec (repeat (* 64 32) 0)) ;; Flat vector for the screen
+       :keypad (set nil)} ;; currently pressed keys
       (load-font)))
+
+(defn load-rom [cpu filename]
+  (let [rom-bytes
+        (-> (io/resource "test-rom.ch8")
+            (io/input-stream)
+            (.readAllBytes))]
+    (copy-to-array! rom-bytes (:memory cpu) 0x200)
+    cpu))
 
 (defn wrap-byte [n]
   (bit-and n 0xFF))
