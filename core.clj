@@ -116,14 +116,22 @@
 
 (defn step [cpu]
   (let [opcode (fetch-opcode cpu)
-        {:keys [op nnn]} (decode-opcode opcode)
+        {:keys [op x y nn nnn]} (decode-opcode opcode)
         ;; Default: move to next instruction
-        cpu-stepped (update cpu :pc + 2)]
+        cpu-stepped (increment-pc cpu)]
     (case op
       0x0000 cpu-stepped
       0x1000 (assoc cpu-stepped :pc nnn)
+      0x6000 (write-reg cpu-stepped x nn)
+      0x7000 (write-reg cpu-stepped x (+ (read-reg cpu-stepped x) nn))
+      0xA000 (assoc cpu-stepped :i nnn)
       ;; Default case for unimplemented opcodes
       cpu-stepped)))
+
+(-> (init-cpu))
+
+(assoc [1 2 3] 0 2)
+
 
 (defn -main []
   (println "Chip-8 Emulator Running..."))
