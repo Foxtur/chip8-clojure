@@ -121,13 +121,21 @@
         cpu-stepped (increment-pc cpu)]
     (case op
       0x0000 (case nn
-               0xEE (let [[cpu addr] (pop-stack cpu-stepped)]
-                      (assoc cpu :pc addr)) 
+               0xEE (let [[popped-cpu addr] (pop-stack cpu-stepped)]
+                      (assoc popped-cpu :pc addr)) 
                cpu-stepped)
       0x1000 (assoc cpu-stepped :pc nnn)
       0x2000 (-> cpu-stepped
                  (push-stack (:pc cpu-stepped))
                  (assoc :pc nnn))
+      0x3000 (let [vx (read-reg cpu-stepped x)]
+               (if (= vx nn)
+                 (increment-pc cpu-stepped)
+                 cpu-stepped))
+      0x4000 (let [vx (read-reg cpu-stepped x)]
+               (if (not= vx nn)
+                 (increment-pc cpu-stepped)
+                 cpu-stepped))
       0x6000 (write-reg cpu-stepped x nn)
       0x7000 (let [old-val (read-reg cpu-stepped x)]
                (write-reg cpu-stepped x (+ old-val nn)))
