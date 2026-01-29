@@ -116,7 +116,7 @@
 
 (defn step [cpu]
   (let [opcode (fetch-opcode cpu)
-        {:keys [op x y nn nnn] :as decoded} (decode-opcode opcode)
+        {:keys [op x y n nn nnn] :as decoded} (decode-opcode opcode)
         ;; Default: move to next instruction
         cpu-stepped (increment-pc cpu)]
     (case op
@@ -136,17 +136,25 @@
                (if (not= vx nn)
                  (increment-pc cpu-stepped)
                  cpu-stepped))
+      0x5000 (let [vx (read-reg cpu-stepped x)
+                   vy (read-reg cpu-stepped y)]
+               (if (not= n 0)
+                 (throw (IllegalStateException. "5XY0 - Trailing nibble must end in 0")))
+               (if (= vx vy)
+                 (increment-pc cpu-stepped)
+                 cpu-stepped))
       0x6000 (write-reg cpu-stepped x nn)
       0x7000 (let [old-val (read-reg cpu-stepped x)]
                (write-reg cpu-stepped x (+ old-val nn)))
+
+      0x9000 (let [vx (read-reg cpu-stepped x)
+                   vy (read-reg cpu-stepped y)]
+               (if (not= vx vy)
+                 (increment-pc cpu-stepped)
+                 cpu-stepped))
       0xA000 (assoc cpu-stepped :i nnn)
       ;; Default case for unimplemented opcodes
       cpu-stepped)))
-
-(-> (init-cpu))
-
-(assoc [1 2 3] 0 2)
-
 
 (defn -main []
   (println "Chip-8 Emulator Running..."))
