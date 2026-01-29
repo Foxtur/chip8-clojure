@@ -114,5 +114,16 @@
     ;; Merge two 8-bit bytes into one 16bit opcode
     (bit-or (bit-shift-left byte1 8) byte2)))
 
+(defn step [cpu]
+  (let [opcode (fetch-opcode cpu)
+        {:keys [op nnn]} (decode-opcode opcode)
+        ;; Default: move to next instruction
+        cpu-stepped (update cpu :pc + 2)]
+    (case op
+      0x0000 cpu-stepped
+      0x1000 (assoc cpu-stepped :pc nnn)
+      ;; Default case for unimplemented opcodes
+      cpu-stepped)))
+
 (defn -main []
   (println "Chip-8 Emulator Running..."))
