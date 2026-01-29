@@ -116,14 +116,21 @@
 
 (defn step [cpu]
   (let [opcode (fetch-opcode cpu)
-        {:keys [op x y nn nnn]} (decode-opcode opcode)
+        {:keys [op x y nn nnn] :as decoded} (decode-opcode opcode)
         ;; Default: move to next instruction
         cpu-stepped (increment-pc cpu)]
     (case op
-      0x0000 cpu-stepped
+      0x0000 (case nn
+               0xEE (let [[cpu addr] (pop-stack cpu-stepped)]
+                      (assoc cpu :pc addr)) 
+               cpu-stepped)
       0x1000 (assoc cpu-stepped :pc nnn)
+      0x2000 (-> cpu-stepped
+                 (push-stack (:pc cpu-stepped))
+                 (assoc :pc nnn))
       0x6000 (write-reg cpu-stepped x nn)
-      0x7000 (write-reg cpu-stepped x (+ (read-reg cpu-stepped x) nn))
+      0x7000 (let [old-val (read-reg cpu-stepped x)]
+               (write-reg cpu-stepped x (+ old-val nn)))
       0xA000 (assoc cpu-stepped :i nnn)
       ;; Default case for unimplemented opcodes
       cpu-stepped)))
