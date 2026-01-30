@@ -75,13 +75,18 @@
   (wrap-byte (aget ^bytes (:memory cpu) addr)))
 
 (defn write-mem [cpu addr val]
+  {:pre [(<= val 255)]}
   (aset ^bytes (:memory cpu) addr (unchecked-byte val))
   cpu) ;; return CPU so we can chain operations
 
 (defn read-reg [cpu reg-idx]
   (get-in cpu [:v reg-idx]))
 
-(defn write-reg [cpu reg-idx val]
+(defn write-reg
+  "Writes `val` to register `reg-idx` of `cpu`
+
+   Returns: the updated cpu"
+  [cpu reg-idx val]
   (assoc-in cpu [:v reg-idx] (wrap-byte val)))
 
 (defn decode-opcode [opcode]
@@ -121,7 +126,6 @@
         {:keys [op x y n nn nnn] :as decoded} (decode-opcode opcode)
         ;; Default: move to next instruction
         cpu-stepped (increment-pc cpu)]
-    (println decoded)
     (case op
       0x0000 (case nn
                0xEE (let [[popped-cpu addr] (pop-stack cpu-stepped)]
@@ -131,14 +135,17 @@
       0x2000 (-> cpu-stepped
                  (push-stack (:pc cpu-stepped))
                  (assoc :pc nnn))
+      ;; SE Vx, byte
       0x3000 (let [vx (read-reg cpu-stepped x)]
                (if (= vx nn)
                  (increment-pc cpu-stepped)
                  cpu-stepped))
+      ;; SNE Vx, byte
       0x4000 (let [vx (read-reg cpu-stepped x)]
                (if (not= vx nn)
                  (increment-pc cpu-stepped)
                  cpu-stepped))
+      ;; SE Vx, Vy
       0x5000 (let [vx (read-reg cpu-stepped x)
                    vy (read-reg cpu-stepped y)]
                (if (not= n 0)
@@ -146,25 +153,43 @@
                (if (= vx vy)
                  (increment-pc cpu-stepped)
                  cpu-stepped))
+      ;; LD Vx, byte
       0x6000 (write-reg cpu-stepped x nn)
+      ;; ADD Vx, byte
       0x7000 (let [old-val (read-reg cpu-stepped x)]
                (write-reg cpu-stepped x (+ old-val nn)))
       0x8000 (let [vx (read-reg cpu-stepped x)
                    vy (read-reg cpu-stepped y)]
                (case n
+                 ;; LD Vx, Vy
                  0x0 (write-reg cpu-stepped x vy) 
+                 ;; OR Vx, Vy
                  0x1 (write-reg cpu-stepped x (bit-or vx vy)) 
+                 ;; AND Vx, Vy
                  0x2 (write-reg cpu-stepped x (bit-and vx vy))
+                 ;; XOR Vx, Vy
+                 0x3 (write-reg cpu-stepped x (bit-xor vx vy))
+                 ;; ADD Vx, Vy
+                 0x4 (let [result (+ vx vy)]
+                       (-> cpu-stepped
+                           (write-reg x result)
+                           (write-reg 0xF (if (> result 255) 1 0))))
+                 ;; SUB Vx, Vy
+                 0x5 (let [result (- vx vy)]
+                       (-> cpu-stepped
+                           (write-reg x result)
+                           (write-reg 0xF (if (> vx vy) 1 0))))
                  cpu-stepped))
+      ;; SNE Vx, Vy
       0x9000 (let [vx (read-reg cpu-stepped x)
                    vy (read-reg cpu-stepped y)]
                (if (not= vx vy)
                  (increment-pc cpu-stepped)
                  cpu-stepped))
+      ;; LD I, addr
       0xA000 (assoc cpu-stepped :i nnn)
       ;; Default case for unimplemented opcodes
       nil)))
-
 
 (defn -main []
   (println "Chip-8 Emulator Running..."))
