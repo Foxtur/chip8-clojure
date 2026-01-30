@@ -178,7 +178,19 @@
                  0x5 (let [result (- vx vy)]
                        (-> cpu-stepped
                            (write-reg x result)
-                           (write-reg 0xF (if (> vx vy) 1 0))))
+                           (write-reg 0x0F (if (> vx vy) 1 0))))
+                 ;; SHR Vx{, Vy}
+                 0x6 (let [lsb (bit-shift-right (bit-and 0x0F vx) 3)
+                           shifted (bit-shift-right vx 1)]
+                       (-> cpu-stepped
+                           (write-reg x shifted)
+                           (write-reg 0x0F lsb)))
+                 ;; SHL Vx{, Vy}
+                 0xE (let [msb (bit-shift-right (bit-and 0xF0 vx) 7)
+                           shifted (bit-shift-left vx 1)]
+                       (-> cpu-stepped
+                           (write-reg x shifted)
+                           (write-reg 0x0F msb)))
                  cpu-stepped))
       ;; SNE Vx, Vy
       0x9000 (let [vx (read-reg cpu-stepped x)
