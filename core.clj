@@ -69,7 +69,9 @@
 (defn wrap-byte [n]
   (bit-and n 0xFF))
 
-(defn read-mem [cpu addr]
+(defn read-mem
+  "Reads memory `addr` from `cpu`"
+  [cpu addr]
   (wrap-byte (aget ^bytes (:memory cpu) addr)))
 
 (defn write-mem [cpu addr val]
@@ -119,10 +121,11 @@
         {:keys [op x y n nn nnn] :as decoded} (decode-opcode opcode)
         ;; Default: move to next instruction
         cpu-stepped (increment-pc cpu)]
+    (println decoded)
     (case op
       0x0000 (case nn
                0xEE (let [[popped-cpu addr] (pop-stack cpu-stepped)]
-                      (assoc popped-cpu :pc addr)) 
+                      (assoc popped-cpu :pc addr))
                cpu-stepped)
       0x1000 (assoc cpu-stepped :pc nnn)
       0x2000 (-> cpu-stepped
@@ -146,7 +149,13 @@
       0x6000 (write-reg cpu-stepped x nn)
       0x7000 (let [old-val (read-reg cpu-stepped x)]
                (write-reg cpu-stepped x (+ old-val nn)))
-
+      0x8000 (let [vx (read-reg cpu-stepped x)
+                   vy (read-reg cpu-stepped y)]
+               (case n
+                 0x0 (write-reg cpu-stepped x vy) 
+                 0x1 (write-reg cpu-stepped x (bit-or vx vy)) 
+                 0x2 (write-reg cpu-stepped x (bit-and vx vy))
+                 cpu-stepped))
       0x9000 (let [vx (read-reg cpu-stepped x)
                    vy (read-reg cpu-stepped y)]
                (if (not= vx vy)
@@ -154,7 +163,8 @@
                  cpu-stepped))
       0xA000 (assoc cpu-stepped :i nnn)
       ;; Default case for unimplemented opcodes
-      cpu-stepped)))
+      nil)))
+
 
 (defn -main []
   (println "Chip-8 Emulator Running..."))
