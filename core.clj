@@ -208,6 +208,19 @@
                  cpu-stepped))
       ;; LD I, addr
       0xA000 (assoc cpu-stepped :i nnn)
+      0xF000 (case nn
+               ;; LD Vx, DT
+               0x07 (write-reg cpu-stepped x (:delay cpu-stepped))
+               ;; LD DT, Vx
+               0x15 (let [vx (read-reg cpu-stepped x)]
+                      (assoc cpu-stepped :delay vx))
+               ;; LD ST, Vx
+               0x18 (let [vx (read-reg cpu-stepped x)]
+                      (assoc cpu-stepped :sound vx))
+               ;; ADD I, Vx
+               0x1E (let [vx (read-reg cpu-stepped x)
+                          i (:i cpu-stepped)]
+                      (assoc cpu-stepped :i (+ i vx))))
       ;; Default case for unimplemented opcodes
       nil)))
 
