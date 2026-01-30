@@ -128,6 +128,8 @@
         cpu-stepped (increment-pc cpu)]
     (case op
       0x0000 (case nn
+               ;; CLS
+               0xE0 (assoc cpu-stepped :display (vec (repeat 2048 0)))
                0xEE (let [[popped-cpu addr] (pop-stack cpu-stepped)]
                       (assoc popped-cpu :pc addr))
                cpu-stepped)
