@@ -170,23 +170,31 @@
                  ;; XOR Vx, Vy
                  0x3 (write-reg cpu-stepped x (bit-xor vx vy))
                  ;; ADD Vx, Vy
-                 0x4 (let [result (+ vx vy)]
+                 0x4 (let [result (+ vx vy)
+                           flag (if (> result 255) 1 0)]
                        (-> cpu-stepped
                            (write-reg x result)
-                           (write-reg 0xF (if (> result 255) 1 0))))
+                           (write-reg 0xF flag)))
                  ;; SUB Vx, Vy
-                 0x5 (let [result (- vx vy)]
+                 0x5 (let [result (- vx vy)
+                           flag (if (> vx vy) 1 0)]
                        (-> cpu-stepped
                            (write-reg x result)
-                           (write-reg 0x0F (if (> vx vy) 1 0))))
+                           (write-reg 0x0F flag)))
                  ;; SHR Vx{, Vy}
-                 0x6 (let [lsb (bit-shift-right (bit-and 0x0F vx) 3)
+                 0x6 (let [lsb (unsigned-bit-shift-right (bit-and 0x0F vx) 3)
                            shifted (bit-shift-right vx 1)]
                        (-> cpu-stepped
                            (write-reg x shifted)
                            (write-reg 0x0F lsb)))
+                 ;; SUBN Vx, Vy
+                 0x7 (let [flag (if (> vy vx) 1 0)
+                           result (- vy vx)]
+                       (-> cpu-stepped
+                           (write-reg x result)
+                           (write-reg 0x0F flag)))
                  ;; SHL Vx{, Vy}
-                 0xE (let [msb (bit-shift-right (bit-and 0xF0 vx) 7)
+                 0xE (let [msb (unsigned-bit-shift-right (bit-and 0xF0 vx) 7)
                            shifted (bit-shift-left vx 1)]
                        (-> cpu-stepped
                            (write-reg x shifted)
