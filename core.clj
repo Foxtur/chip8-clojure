@@ -268,6 +268,11 @@
                ;; LD ST, Vx
                0x18 (let [vx (read-reg cpu-stepped x)]
                       (assoc cpu-stepped :sound vx))
+               ;; LD Vx, K
+               0x0A (let [vx (read-reg cpu-stepped x)]
+                      (if (empty? (:keypad cpu-stepped))
+                        cpu
+                        (write-reg cpu-stepped x (first (:keypad cpu-stepped)))))
                ;; ADD I, Vx
                0x1E (let [vx (read-reg cpu-stepped x)]
                       (update cpu-stepped :i + vx)))
