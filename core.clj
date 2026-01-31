@@ -247,6 +247,18 @@
                           (inc row)
                           (inc addr))
                    cpu)))
+      0xE000 (case nn
+               ;; SKP Vx
+               0x9E (let [vx (read-reg cpu-stepped x)]
+                      (if (contains? (:keypad cpu-stepped) vx)
+                        (increment-pc cpu-stepped)
+                        cpu-stepped))
+               ;; SKPNP Vx
+               0xA1 (let [vx (read-reg cpu-stepped x)]
+                      (if (contains? (:keypad cpu-stepped) vx)
+                        cpu-stepped
+                        (increment-pc cpu-stepped)))
+               cpu-stepped)
       0xF000 (case nn
                ;; LD Vx, DT
                0x07 (write-reg cpu-stepped x (:delay cpu-stepped))
