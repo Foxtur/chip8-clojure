@@ -89,6 +89,32 @@
   [cpu reg-idx val]
   (assoc-in cpu [:v reg-idx] (wrap-byte val)))
 
+(defn write-pixel
+  [cpu x y new-val]
+  ;; pixel(x,y) = y * 64 + x
+  (let [idx (+ (* (mod y 32) 64) (mod x 64))
+        val (nth (:display cpu) idx)
+        xor-val (bit-xor val new-val)
+        collision (if (and (= val 1) (= xor-val 0)) 1 0)]
+    (-> cpu
+        (assoc-in [:display idx] xor-val)
+        (write-reg 0xF collision))))
+
+(reduce (fn [a v] (if (< a 100) (+ a v) (reduced :big))) (range 20))
+
+(defn write-sprite [cpu x y sprite-addr]
+  (let [data (read-mem cpu sprite-addr)]
+    (loop [cpu cpu
+           idx 7
+           collision 0]
+      (let [val (if (bit-test data idx) 1 0)]
+        (if (>= idx 0)
+          (let [cpu (write-pixel cpu (+ x (- 7 idx)) y val)
+                dirty (read-reg cpu 0xF)
+                cpu (if (= 1 collision) (write-reg cpu 0xF 1) cpu)]
+            (recur cpu (dec idx) (if (= 1 collision) 1 dirty)))
+          cpu)))))
+
 (defn decode-opcode [opcode]
   {:op (bit-and opcode 0xF000) ;; First nibble
    :x  (bit-shift-right (bit-and opcode 0x0F00) 8) ;; Second nibble
@@ -164,9 +190,9 @@
                    vy (read-reg cpu-stepped y)]
                (case n
                  ;; LD Vx, Vy
-                 0x0 (write-reg cpu-stepped x vy) 
+                 0x0 (write-reg cpu-stepped x vy)
                  ;; OR Vx, Vy
-                 0x1 (write-reg cpu-stepped x (bit-or vx vy)) 
+                 0x1 (write-reg cpu-stepped x (bit-or vx vy))
                  ;; AND Vx, Vy
                  0x2 (write-reg cpu-stepped x (bit-and vx vy))
                  ;; XOR Vx, Vy
@@ -210,6 +236,17 @@
                  cpu-stepped))
       ;; LD I, addr
       0xA000 (assoc cpu-stepped :i nnn)
+      ;; DRW Vx, Vy, nibble
+      0xD000 (let [vx (read-reg cpu-stepped x)
+                   vy (read-reg cpu-stepped y)]
+               (loop [cpu cpu-stepped
+                      row 0
+                      addr (:i cpu-stepped)]
+                 (if (<= row (dec n))
+                   (recur (write-sprite cpu-stepped vx (+ vy row) addr)
+                          (inc row)
+                          (inc addr))
+                   cpu)))
       0xF000 (case nn
                ;; LD Vx, DT
                0x07 (write-reg cpu-stepped x (:delay cpu-stepped))
@@ -220,11 +257,10 @@
                0x18 (let [vx (read-reg cpu-stepped x)]
                       (assoc cpu-stepped :sound vx))
                ;; ADD I, Vx
-               0x1E (let [vx (read-reg cpu-stepped x)
-                          i (:i cpu-stepped)]
-                      (assoc cpu-stepped :i (+ i vx))))
+               0x1E (let [vx (read-reg cpu-stepped x)]
+                      (update cpu-stepped :i + vx)))
       ;; Default case for unimplemented opcodes
-      nil)))
+      cpu-stepped)))
 
 (defn -main []
   (println "Chip-8 Emulator Running..."))
