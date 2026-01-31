@@ -268,6 +268,24 @@
                ;; LD ST, Vx
                0x18 (let [vx (read-reg cpu-stepped x)]
                       (assoc cpu-stepped :sound vx))
+               ;; LD F, Vx
+               0x29 (let [vx (read-reg cpu-stepped x)
+                          addr (* 5 vx)]
+                      (assoc cpu-stepped :i addr))
+               ;; LD B, Vx
+               0x33 (let [vx (read-reg cpu-stepped x)
+                          addr (:i cpu-stepped)]
+                      (-> cpu-stepped
+                          (write-mem (+ addr 0) (quot vx 100))
+                          (write-mem (+ addr 1) (quot (rem vx 100) 10))
+                          (write-mem (+ addr 2) (rem vx 10))))
+               ;; LD[I], Vx
+               0x55 (reduce
+                     (fn [cpu idx]
+                       (let [addr (:i cpu)
+                             val (read-reg cpu idx)]
+                         (write-mem cpu (+ addr idx) val)))
+                     cpu-stepped (range (inc x)))
                ;; LD Vx, K
                0x0A (let [vx (read-reg cpu-stepped x)]
                       (if (empty? (:keypad cpu-stepped))
