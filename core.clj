@@ -276,16 +276,25 @@
                0x33 (let [vx (read-reg cpu-stepped x)
                           addr (:i cpu-stepped)]
                       (-> cpu-stepped
-                          (write-mem (+ addr 0) (quot vx 100))
-                          (write-mem (+ addr 1) (quot (rem vx 100) 10))
-                          (write-mem (+ addr 2) (rem vx 10))))
+                          (write-mem (+ addr 0) hundreds)
+                          (write-mem (+ addr 1) tens)
+                          (write-mem (+ addr 2) ones)))
                ;; LD[I], Vx
                0x55 (reduce
                      (fn [cpu idx]
                        (let [addr (:i cpu)
                              val (read-reg cpu idx)]
                          (write-mem cpu (+ addr idx) val)))
-                     cpu-stepped (range (inc x)))
+                     cpu-stepped
+                     (range (inc x)))
+               ;; LD Vx, [I]
+               0x65 (reduce
+                     (fn [cpu idx]
+                       (let [addr (:i cpu)
+                             val (read-mem cpu (+ addr idx))]
+                         (write-reg cpu idx val)))
+                     cpu-stepped
+                     (range (inc x)))
                ;; LD Vx, K
                0x0A (let [vx (read-reg cpu-stepped x)]
                       (if (empty? (:keypad cpu-stepped))
