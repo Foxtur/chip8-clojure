@@ -1,39 +1,34 @@
 (ns chip8.web
   (:require [org.httpkit.server :as server]
             [ring.middleware.params :refer [wrap-params]]
+            [ring.middleware.session :refer [wrap-session]]
             [hiccup2.core :as h]
             [chip8.core :as cpu]))
 
-(def global-cpu (atom (-> (cpu/init-cpu)
-                          (cpu/load-rom "roms/pong.ch8"))))
-
-;; This runs once when the server starts
-(defn start-emulator-thread! []
-  (future
-    (loop []
-      (when-not (:paused? @global-cpu)
-        (swap! global-cpu (fn [cpu]
-                            (let [cpu-after-inst (nth (iterate cpu/step cpu) 10)]
-                              (cpu/decrement-timers cpu-after-inst)))))
-      (Thread/sleep 16) ;; Aim for 60Hz
-      (recur))))
+(def active-games (atom {}))
 
 (defn home-page []
-  (str
-   (h/html
-    [:html
-     [:head
-      [:title "Datastar Chip-8"]
-      [:script {:type "module" 
-                :src "https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.7/bundles/datastar.js"}]]
-     (h/raw (str "<body data-signals=\"{}\" "
-                 "      data-on:keydown__window=\"@get('/input?key=' + evt.key)\" "
-                 "      data-on:keyup__window=\"@get('/input?key=' + evt.key + '&type=up')\">"))
-     [:h1 "Datastar Chip-8"]
-     (h/raw "<div data-init=\"@get('/stream')\">")
-       [:div#display "Connecting..."]
-     (h/raw "</div>")
-     (h/raw "</body>")])))
+  (let [sid (str (java.util.UUID/randomUUID))]
+    (str
+     (h/html
+      [:html
+       [:head
+        [:title "Isolated Chip-8"]
+        [:script {:type "module"
+                  :src "https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.7/bundles/datastar.js"}]
+        [:script (h/raw "window.addEventListener('keydown', (e) => console.log('Physical Key:', e.key));")]]
+
+       [:body
+        [:h1 "Session: " sid]
+        (h/raw (str "<div "
+                    ;; Manually build the URL string to force Query Parameters
+                    "     data-on:keydown__window=\"@get('/input?sid=" sid "&key=' + evt.key)\" "
+                    "     data-on:keyup__window=\"@get('/input?sid=" sid "&key=' + evt.key + '&type=up')\">"
+                    "  <div data-init=\"@get('/stream?sid=" sid "')\">"
+                    "    <div id='display'>Connecting...</div>"
+                    "  </div>"
+                    "</div>"))
+        (h/raw "</body>")]]))))
 
 ;; Wasteful Div-Grid approach
 #_(defn home-page []
@@ -94,50 +89,49 @@
                      "data: elements " html-str "\n\n")
                 false))
 
-(defn stream-handler [req]
-  (server/with-channel req channel
-    ;; Send initial headers to keep connection open
-    (server/send! channel {:headers {"Content-Type" "text/event-stream"
-                                     "Cache-Control" "no-cache"
-                                     "Connection" "keep-alive"}} false)
+(defn stream-handler [{:keys [params] :as req}]
+  (let [sid (get params "sid")]
+    (println "Stream connected for SID:" sid)
+    (server/with-channel req channel
+      (server/send! channel {:headers {"Content-Type" "text/event-stream"}} false)
+      (let [user-cpu (atom (-> (cpu/init-cpu) (cpu/load-rom "resources/roms/Pong.ch8")))]
+        (swap! active-games assoc sid user-cpu)
+        (future
+          (loop [last-display nil]
+            (if (server/open? channel)
+              (let [next-cpu (-> (nth (iterate cpu/step @user-cpu) 10) cpu/decrement-timers)]
+                (reset! user-cpu next-cpu)
+                (when (not= last-display (:display next-cpu))
+                  (send-fragment! channel (render-display next-cpu)))
+                (Thread/sleep 16)
+                (recur (:display next-cpu)))
+              (swap! active-games dissoc sid))))))))
 
-    (println "Client connected to stream.")
+(defn input-handler [{:keys [params query-string] :as req}]
+  (let [sid (get params "sid")
+        key-val (get params "key")
+        user-atom (get @active-games sid)]
+    (println "DEBUG: SID=" sid " | Key=" key-val " | Found=" (some? user-atom))
+    (println "Full Req Params:" (:params req))
+    (when user-atom
+      (let [key-str (get params "key")
+            key-char (when (= 1 (count key-str)) (first key-str))
+            hex (get cpu/key-map key-char)]
+        (when hex
+          (if (= (get params "type") "up")
+            (swap! user-atom update :keypad disj hex)
+            (swap! user-atom update :keypad conj hex)))))
+    {:status 204}))
 
-    (future
-      (loop [last-display nil]
-        (if (server/open? channel)
-          (let [current-state @global-cpu
-                current-display (:display current-state)]
+(defn app-handler [{:keys [uri params] :as req}]
+  (case uri
+    "/"       {:status 200 :headers {"Content-Type" "text/html"} :body (home-page)}
+    "/stream" (stream-handler req)
+    "/input"  (input-handler req)
+    {:status 404 :body "Not Found"}))
 
-            ;; OPTIMIZATION: Only send a fragment if the display has actually changed
-            (when (not= last-display current-display)
-              (send-fragment! channel (render-display current-state)))
-
-            (Thread/sleep 16) ;; Sync with 60Hz
-            (recur current-display))
-          (println "Client disconnected."))))))
-
-(defn input-handler [{:keys [params] :as req}]
-  (println "Input received:" params) ;; <--- ADD THIS
-  (let [key-str (get params "key")
-        key-char (when (seq key-str) (first key-str))
-        type (get params "type")
-        hex (get cpu/key-map key-char)]
-    (when hex
-      (if (= type "up")
-        (swap! global-cpu update :keypad disj hex)
-        (swap! global-cpu update :keypad conj hex)))
-    {:status 204})) ;; 204 No Content tells the browser 'Done, no UI change needed'
-
-(def app (wrap-params
-          (fn [{:keys [uri params] :as req}]
-            (case uri
-              "/" {:status 200 :headers {"Content-Type" "text/html"} :body (home-page)}
-              "/stream" (stream-handler req)
-              "/input"  (input-handler req)
-              {:status 404 :body "Not Found"}))))
+(def app (wrap-params app-handler))
 
 (defn -main [& args]
-  (start-emulator-thread!)
   (server/run-server app {:port 8080})
   (println "Server started on http://localhost:8080"))
