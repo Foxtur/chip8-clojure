@@ -1,7 +1,7 @@
 (ns chip8.web
   (:require [org.httpkit.server :as server]
             [ring.middleware.params :refer [wrap-params]]
-            [ring.middleware.session :refer [wrap-session]]
+            [ring.middleware.resource :refer [wrap-resource]]
             [hiccup2.core :as h]
             [chip8.core :as cpu]))
 
@@ -25,7 +25,9 @@
                     "     data-on:keydown__window=\"@get('/input?sid=" sid "&key=' + evt.key)\" "
                     "     data-on:keyup__window=\"@get('/input?sid=" sid "&key=' + evt.key + '&type=up')\">"
                     "  <div data-init=\"@get('/stream?sid=" sid "')\">"
-                    "    <div id='display'>Connecting...</div>"
+                    "    <div id='display-container'>"
+                    "      Connecting..."
+                    "    </div>"
                     "  </div>"
                     "</div>"))
         (h/raw "</body>")]]))))
@@ -60,20 +62,26 @@
   (let [display (:display cpu)
         width 64
         height 32
-        scale 10]
+        scale 10
+        sound-active? (and (> (:sound cpu) 0) (< (:sound cpu) 5))]
     (str
      (h/html
-      [:svg#display {:width (* width scale)
-                     :height (* height scale)
-                     :viewbox (str "0 0 " width " " height)
-                     :style "background: black; shape-rendering: crispEdges;"}
-          ;; Iterate through display buffer
-       (for [idx (range (count display))
-             :let [pixel (nth display idx)]
-             :when (= pixel 1)
-             :let [x (mod idx width)
-                   y (quot idx width)]]
-         [:rect {:x x :y y :width 1 :height 1 :fill "white"}])]))))
+      [:div#display-container
+          ;; the screen
+       [:svg#display {:width (* width scale)
+                      :height (* height scale)
+                      :viewbox (str "0 0 " width " " height)
+                      :style "background: black; shape-rendering: crispEdges;"}
+        (for [idx (range (count display))
+              :let [pixel (nth display idx)]
+              :when (= pixel 1)
+              :let [x (mod idx width)
+                    y (quot idx width)]]
+          [:rect {:x x :y y :width 1 :height 1 :fill "white"}])]
+          ;; sound trigger if timer is > 0
+       (when sound-active?
+         [:audio {:src "/soundeffect.mp3"
+                  :autoplay true}])]))))
 
 (defn render-display-divs [cpu]
   (let [display (:display cpu)]
@@ -107,12 +115,9 @@
                 (recur (:display next-cpu)))
               (swap! active-games dissoc sid))))))))
 
-(defn input-handler [{:keys [params query-string] :as req}]
+(defn input-handler [{:keys [params] :as req}]
   (let [sid (get params "sid")
-        key-val (get params "key")
         user-atom (get @active-games sid)]
-    (println "DEBUG: SID=" sid " | Key=" key-val " | Found=" (some? user-atom))
-    (println "Full Req Params:" (:params req))
     (when user-atom
       (let [key-str (get params "key")
             key-char (when (= 1 (count key-str)) (first key-str))
@@ -123,14 +128,17 @@
             (swap! user-atom update :keypad conj hex)))))
     {:status 204}))
 
-(defn app-handler [{:keys [uri params] :as req}]
+(defn app-handler [{:keys [uri] :as req}]
   (case uri
     "/"       {:status 200 :headers {"Content-Type" "text/html"} :body (home-page)}
     "/stream" (stream-handler req)
     "/input"  (input-handler req)
     {:status 404 :body "Not Found"}))
 
-(def app (wrap-params app-handler))
+(def app
+  (-> app-handler
+      wrap-params
+      (wrap-resource "public")))
 
 (defn -main [& args]
   (server/run-server app {:port 8080})
