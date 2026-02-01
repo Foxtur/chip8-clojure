@@ -1,7 +1,9 @@
 (ns chip8.core
   (:require [clojure.java.io :as io]
             [quil.core :as q]
-            [quil.middleware :as m]))
+            [quil.middleware :as m])
+  (:import [javax.swing JFileChooser]
+           [javax.swing.filechooser FileNameExtensionFilter]))
 
 (defn- copy-vec-to-array!
   [src-vec dest offset]
@@ -60,14 +62,6 @@
        :keypad (set nil)} ;; currently pressed keys
       (load-font)))
 
-(defn load-rom [cpu filename]
-  (let [rom-bytes
-        (-> (io/resource filename)
-            (io/input-stream)
-            (.readAllBytes))]
-    (copy-to-array! rom-bytes (:memory cpu) 0x200)
-    cpu))
-
 (defn wrap-byte [n]
   (bit-and n 0xFF))
 
@@ -114,6 +108,26 @@
                 cpu (if (= 1 collision) (write-reg cpu 0xF 1) cpu)]
             (recur cpu (dec idx) (if (= 1 collision) 1 dirty)))
           cpu)))))
+
+(defn load-font [cpu]
+  (reduce-kv (fn [c idx val]
+               (write-mem c idx val))
+             cpu
+             font-set))
+(defn load-rom [cpu path-or-res]
+  (let [source (let [f (io/file path-or-res)]
+                 (if (.exists f) f (io/resource path-or-res)))]
+    (if source
+      (with-open [is (io/input-stream source)]
+        (let [rom-bytes (.readAllBytes is)
+              rom-vec (vec rom-bytes)]
+          (reduce-kv (fn [c idx val]
+                       (write-mem c (+ 0x200 idx) val))
+                     cpu
+                     rom-vec)))
+      (do
+        (println "Error: Could not find ROM at" path-or-res)
+        cpu))))
 
 (defn decode-opcode [opcode]
   {:op (bit-and opcode 0xF000) ;; First nibble
@@ -327,6 +341,21 @@
 
 ;;; quil
 
+(defn choose-and-load-rom [cpu]
+  (let [chooser (JFileChooser. "resources/roms/")
+        _ (.setFileFilter chooser (FileNameExtensionFilter. "Chip-8 ROMs" (into-array ["ch8"])))
+        return-val (.showOpenDialog chooser nil)]
+    (if (= return-val JFileChooser/APPROVE_OPTION)
+      (let [file (.getSelectedFile chooser)
+            path (.getAbsolutePath file)
+            ;; Create a totally fresh CPU and load the ROM into it
+            new-cpu (load-rom (init-cpu) path)]
+        (if (nil? new-cpu)
+          (do (println "WARNING: load-rom returned nil! Keeping old state.") cpu)
+          (do (println "Switching to new ROM...") new-cpu)))
+      ;; If user clicks 'Cancel' or closes the window
+      (do (println "Load cancelled.") cpu))))
+
 ;; 1 2 3 C      (Physical: 1 2 3 4)
 ;; 4 5 6 D      (Physical: Q W E R)
 ;; 7 8 9 E      (Physical: A S D F)
@@ -338,8 +367,12 @@
    \z 0xA, \x 0x0, \c 0xB, \v 0xF})
 
 (defn on-key-pressed [cpu event]
-  (if-let [hex (get key-map (:raw-key event))]
-    (update cpu :keypad conj hex)))
+  (let [key (:raw-key event)
+        hex (get key-map key)]
+    (cond
+      (= key \o) (choose-and-load-rom cpu)
+      (some? hex) (update cpu :keypad conj hex)
+      :else cpu)))
 
 (defn on-key-released [cpu event]
   (if-let [hex (get key-map (:raw-key event))]
@@ -352,6 +385,8 @@
       (load-rom rom-file)))
 
 (defn update-state [cpu]
+  (if (nil? cpu)
+    (do (println "CRITICAL ERROR: State became NIL!") (init-cpu)))
   (when (> (:sound cpu) 0)
     (.beep (java.awt.Toolkit/getDefaultToolkit)))
   (let [cpu-after-instructions (nth (iterate step cpu) 7)]
@@ -394,6 +429,6 @@
 (comment
   (-main "roms/test_opcode.ch8")
   (-main "roms/Airplane.ch8")
-  (-main "roms/pong.ch8")
+  (-main "./resources/roms/pong.ch8")
   (-main)
   (run-headless 6000 "roms/Airplane.ch8"))
