@@ -59,7 +59,8 @@
        :delay 0
        :sound 0
        :display (vec (repeat (* 64 32) 0)) ;; Flat vector for the screen
-       :keypad (set nil)} ;; currently pressed keys
+       :keypad (set nil) ;; currently pressed keys
+       :paused? false} 
       (load-font)))
 
 (defn wrap-byte [n]
@@ -371,12 +372,14 @@
         hex (get key-map key)]
     (cond
       (= key \o) (choose-and-load-rom cpu)
+      (= key \p) (update cpu :paused? not)
       (some? hex) (update cpu :keypad conj hex)
       :else cpu)))
 
 (defn on-key-released [cpu event]
   (if-let [hex (get key-map (:raw-key event))]
-    (update cpu :keypad disj hex)))
+    (update cpu :keypad disj hex)
+    cpu))
 
 (defn setup [rom-file]
   (q/frame-rate 120)
@@ -385,12 +388,15 @@
       (load-rom rom-file)))
 
 (defn update-state [cpu]
-  (if (nil? cpu)
-    (do (println "CRITICAL ERROR: State became NIL!") (init-cpu)))
-  (when (> (:sound cpu) 0)
-    (.beep (java.awt.Toolkit/getDefaultToolkit)))
-  (let [cpu-after-instructions (nth (iterate step cpu) 7)]
-    (decrement-timers cpu-after-instructions)))
+  (if (nil? cpu) 
+    nil
+    (if (:paused? cpu)
+      cpu
+      (let [sound-val (get cpu :sound 0)
+            cpu-after-inst (nth (iterate step cpu) 10)]
+        (when (> sound-val 0)
+          (.beep (java.awt.Toolkit/getDefaultToolkit)))
+        (decrement-timers cpu-after-inst)))))
 
 (defn draw-state [cpu]
   (q/background 0)
@@ -403,7 +409,10 @@
             display (:display cpu)
             on? (= 1 (nth display disp-idx))]
         (when on?
-          (q/rect (* x scale) (* y scale) 10 10))))))
+          (q/rect (* x scale) (* y scale) 10 10)))))
+  (when (:paused? cpu)
+    (q/fill 255 0 0)
+    (q/text "PAUSED" 10 20)))
 
 (defn -main [& args]
   (let [rom-path (or (first args) "roms/IBM Logo.ch8")]
