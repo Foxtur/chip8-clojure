@@ -3,12 +3,20 @@
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.resource :refer [wrap-resource]]
             [hiccup2.core :as h]
-            [chip8.core :as cpu]))
+            [chip8.core :as cpu]
+            [clojure.java.io :as io]))
 
 (def active-games (atom {}))
 
+(defn list-roms []
+  (let [dir (io/file "resources/roms")]
+    (if (.exists dir)
+      (sort (map #(.getName %) (.listFiles dir)))
+      ["IBM Logo.ch8"]))) ;; Fallback
+
 (defn home-page []
-  (let [sid (str (java.util.UUID/randomUUID))]
+  (let [sid (str (java.util.UUID/randomUUID))
+        roms (list-roms)]
     (str
      (h/html
       [:html
@@ -68,6 +76,14 @@
 
        [:body
         [:h1 "Session: " sid]
+
+        [:div {:style "margin-bottom: 20px;"}
+         [:label "Choose ROM: "]
+         (h/raw (str "<select "
+                     "  data-on:change=\"@get('/load?sid=" sid "&rom=' + evt.target.value)\">"
+                     (apply str (for [r roms] (str "<option value='" r "'>" r "</option>")))
+                     "</select>"))]
+
         (h/raw (str "<div "
                     ;; Manually build the URL string to force Query Parameters
                     "     data-on:keydown__window=\"@get('/input?sid=" sid "&key=' + evt.key)\" "
@@ -150,7 +166,7 @@
     (println "Stream connected for SID:" sid)
     (server/with-channel req channel
       (server/send! channel {:headers {"Content-Type" "text/event-stream"}} false)
-      (let [user-cpu (atom (-> (cpu/init-cpu) (cpu/load-rom "resources/roms/Pong.ch8")))]
+      (let [user-cpu (atom (-> (cpu/init-cpu) (cpu/load-rom "resources/roms/IBM Logo.ch8")))]
         (swap! active-games assoc sid user-cpu)
         (future
           (loop [last-display nil]
@@ -176,11 +192,26 @@
             (swap! user-atom update :keypad conj hex)))))
     {:status 204}))
 
+(defn load-handler [{:keys [params]}]
+  (let [sid (get params "sid")
+        rom-name (get params "rom")
+        user-atom (get @active-games sid)]
+    (when (and user-atom rom-name)
+      (println "Resetting session" sid "to ROM:" rom-name)
+      ;; 1. Initialize a fresh CPU
+      ;; 2. Load the new ROM
+      ;; 3. reset! the existing atom so the stream loop picks it up instantly
+      (reset! user-atom (-> (cpu/init-cpu)
+                            (cpu/load-rom (str "resources/roms/" rom-name)))))
+    {:status 204 :body ""}))
+
+
 (defn app-handler [{:keys [uri] :as req}]
   (case uri
     "/"       {:status 200 :headers {"Content-Type" "text/html"} :body (home-page)}
     "/stream" (stream-handler req)
     "/input"  (input-handler req)
+    "/load"   (load-handler req)
     {:status 404 :body "Not Found"}))
 
 (def app
