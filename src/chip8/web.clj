@@ -3,10 +3,26 @@
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.resource :refer [wrap-resource]]
             [hiccup2.core :as h]
+            [charred.api :as json]
+            [camel-snake-kebab.core :as csk]
             [chip8.core :as cpu]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.string :as str]))
 
 (def active-games (atom {}))
+
+(defn start-game-loop! [sid]
+  (let [cpu-atom (atom (-> (cpu/init-cpu) (cpu/load-rom "resources/roms/IBM Logo.ch8")))]
+    (future
+      (loop []
+        (if (get @active-games sid) ;; only run if the session is still active
+          (do
+            (when-not (:paused? @cpu-atom)
+              (swap! cpu-atom (fn [cpu] (-> (nth (iterate cpu/step cpu) 10) cpu/decrement-timers))))
+            (Thread/sleep 16)
+            (recur))
+          (println "Stopping loop for" sid))))
+    cpu-atom))
 
 (defn list-roms []
   (let [dir (io/file "resources/roms")]
@@ -16,165 +32,67 @@
 
 (defn home-page []
   (let [sid (str (java.util.UUID/randomUUID))
-        roms (list-roms)]
-    (str
-     (h/html
-      [:html
-       [:head
-        [:title "Isolated Chip-8"]
-        [:script {:type "module"
-                  :src "https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.7/bundles/datastar.js"}]
-        [:script (h/raw "window.addEventListener('keydown', (e) => console.log('Physical Key:', e.key));")]
+        roms (list-roms)
+        ;; Generate the <option> strings manually
+        rom-options (apply str (for [r roms] (str "<option value='" r "'>" r "</option>")))
+        ;; Read the template file from resources
+        template (slurp (io/resource "public/index.html"))]
+    ;; Perform string replacement
+    (-> template
+        (str/replace "{{sid}}" sid)
+        (str/replace "{{rom_options}}" rom-options)
+        (str/replace "{{initial_mode}}" "optimized"))))
 
-        [:style (h/raw "
-        body { 
-          background: #050505; 
-          color: #00FF41; 
-          font-family: 'Courier New', monospace; 
-          display: flex; flex-direction: column; align-items: center;
-        }
-        
-        /* The CRT Screen Container */
-        #display-container {
-          position: relative;
-          padding: 20px;
-          background: #111;
-          border: 10px solid #333;
-          border-radius: 20px;
-          box-shadow: 0 0 50px rgba(0, 255, 65, 0.2);
-          overflow: hidden;
-        }
+(defn render-display-naive-divs [display sound? paused?]
+  (str (h/html
+        [:div#display-container
+         [:div#display {:style "display: grid; grid-template-columns: repeat(64, 10px); background: #000; width: 640px;"}
+          (for [p display]
+            [:div {:style (str "width: 10px; height: 10px; background: " (if (= p 1) "#00FF41" "transparent") ";")}])]
+         (when (and sound? (not paused?)) [:audio {:src "/soundeffect.mp3" :autoplay true}])])))
 
-        /* The Phosphor Glow Effect */
-        #display {
-          background: #000;
-          shape-rendering: crispEdges;
-          filter: drop-shadow(0 0 2px rgba(0, 255, 65, 0.8));
-        }
-
-        /* Scanlines Overlay */
-        #display-container::after {
-          content: ' ';
-          display: block;
-          position: absolute;
-          top: 0; left: 0; bottom: 0; right: 0;
-          background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
-                      linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-          background-size: 100% 4px, 3px 100%;
-          pointer-events: none; /* Let clicks pass through */
-          z-index: 10;
-        }
-
-        /* Slight flickering for realism */
-        @keyframes flicker {
-          0% { opacity: 0.98; }
-          50% { opacity: 1; }
-          100% { opacity: 0.99; }
-        }
-        #display { animation: flicker 0.1s infinite; }
-      ")]]
-
-       [:body
-        [:h1 "Session: " sid]
-
-        [:div {:style "margin-bottom: 20px;"}
-         [:label "Choose ROM: "]
-         (h/raw (str "<select "
-                     "  data-on:change=\"@get('/load?sid=" sid "&rom=' + evt.target.value)\">"
-                     (apply str (for [r roms] (str "<option value='" r "'>" r "</option>")))
-                     "</select>"))]
-
-        (h/raw (str "<div "
-                    ;; Manually build the URL string to force Query Parameters
-                    "     data-on:keydown__window=\"@get('/input?sid=" sid "&key=' + evt.key)\" "
-                    "     data-on:keyup__window=\"@get('/input?sid=" sid "&key=' + evt.key + '&type=up')\">"
-                    "  <div data-init=\"@get('/stream?sid=" sid "')\">"
-                    "    <div id='display-container'>"
-                    "      <svg id='display' width='640' height='320' viewBox='0 0 64 32' style='background:black;'></svg>"
-                    "    </div>"
-                    "  </div>"
-                    "</div>"))
-        (h/raw "</body>")]]))))
-
-;; Wasteful Div-Grid approach
-#_(defn home-page []
-    (str
-     (h/html
-      [:html
-       [:head
-        [:title "Datastar Div-Grid Chip-8"]
-        [:script {:type "module"
-                  :src "https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-RC.7/bundles/datastar.js"}]
-        [:style "
-        #display {
-          display: grid;
-          grid-template-columns: repeat(64, 10px);
-          grid-template-rows: repeat(32, 10px);
-          background: #222;
-          width: 640px;
-        }
-        .pixel { width: 10px; height: 10px; }
-        .on { background: white; }
-        .off { background: black; }
-      "]]
-       [:body
-        [:h1 "Div-Grid Rendering"]
-        [:div {:data-init "@get('/stream')"}
-         [:div#display "Connecting..."]]]])))
-
-(defn render-display-divs-naive [cpu]
-  (let [display (:display cpu)]
-    (str
-     (h/html
-      [:div#display
-       (for [pixel display]
-         [:div {:class (str "pixel " (if (= pixel 1) "on" "off"))}])]))))
-
-(defn render-display [display sound-active? paused?]
+(defn render-display-full-svg [display sound-active? paused?]
   (let [width 64 height 32 scale 10]
     (str
      (h/html
       [:div#display-container
-       [:svg#display {:width (* width scale) :height (* height scale) :viewBox "0 0 64 32"
-                      :style "background: black; shape-rendering: crispEdges;"}
-        ;; Draw pixels
+       [:svg#display {:width (* width scale) :height (* height scale) :viewBox "0 0 64 32" :style "background: black;"}
+        ;; Iterate and draw EVERY single pixel as a rect
         (for [idx (range (count display))
-              :when (= 1 (nth display idx))]
-          [:rect {:x (mod idx 64) :y (quot idx 64) :width 1 :height 1 :fill "#00FF41"}])
-        
-        ;; Draw Pause Text
-        (when paused?
-          [:text {:x 32 :y 16 :fill "red" :font-size "5" 
-                  :text-anchor "middle" :font-family "monospace"} "PAUSED"])]
-       
-       (when (and sound-active? (not paused?))
-         [:audio {:id (str "beep-" (System/currentTimeMillis))
-                  :src "/soundeffect.mp3" :autoplay true}])]))))
+              :let [pixel (nth display idx)
+                    x (mod idx width)
+                    y (quot idx width)]]
+          [:rect {:x x :y y :width 1 :height 1
+                  :fill (if (= pixel 1) "#00FF41" "#111")}])] ;; Dark gray for 'off'
 
-(defn render-display-optimized [display sound-active? paused?]
+       (when paused? [:text {:x 32 :y 16 :fill "red" :font-size "5" :text-anchor "middle"} "PAUSED"])
+       (when (and sound-active? (not paused?))
+         [:audio {:id (str "b-" (System/currentTimeMillis)) :src "/soundeffect.mp3" :autoplay true}])]))))
+
+(defn render-display-granular [display sound-active? paused?]
   (let [width 64 height 32 scale 10]
     (str
      (h/html
-      ;; We target the display-container, but we use "morph" merge
+      ;; Target the display-container, but use "morph" merge
       ;; to ensure Datastar only touches what changed.
       [:div#display-container {:data-merge "morph"}
        [:svg#display {:width (* width scale) :height (* height scale) :viewBox "0 0 64 32"
                       :style "background: black; shape-rendering: crispEdges;"}
-        
-        ;; OPTIMIZATION: Only send the pixels that are ON.
+
+        ;; Only send the pixels that are ON.
         ;; Morphing will remove the ones that disappear.
         (for [idx (range (count display))
               :let [pixel (nth display idx)]
               :when (= pixel 1)]
           [:rect {:id (str "p-" idx) ;; ID is key for granular morphing performance
-                  :x (mod idx width) :y (quot idx width) 
+                  :x (mod idx width) :y (quot idx width)
                   :width 1 :height 1 :fill "#00FF41"}])
-        
+
         ;; Draw Pause Text
         (when paused?
-          [:text {:id "pause-label" :x 32 :y 16 :fill "red" :font-size "5" 
+          [:text {:id "pause-label" :x 32 :y 16 :fill "red" :font-size "5"
                   :text-anchor "middle" :font-family "monospace"} "PAUSED"])]
-       
+
        ;; Sound Trigger: ID must be unique to force fresh play
        (when (and sound-active? (not paused?))
          [:audio {:id (str "beep-" (System/currentTimeMillis))
@@ -186,64 +104,40 @@
                      "data: elements " html-str "\n\n")
                 false))
 
-(defn stream-handler-naive [{:keys [params] :as req}]
-  (let [sid (get params "sid")]
-    (println "Stream connected for SID:" sid)
-    (server/with-channel req channel
-      (server/send! channel {:headers {"Content-Type" "text/event-stream"}} false)
-      (let [user-cpu (atom (-> (cpu/init-cpu) (cpu/load-rom "resources/roms/IBM Logo.ch8")))]
-        (swap! active-games assoc sid user-cpu)
+(defn datastar-params->json [params]
+  (json/read-json params :key-fn csk/->kebab-case-keyword))
+
+(defn stream-handler [{:keys [params] :as req}]
+  (let [sid (get params "sid")
+        datastar (datastar-params->json (get params "datastar"))
+        mode (get datastar :render-mode "optimized")]
+    ;; Get the existing game for this session, or start a new one if it's the first time
+    (let [user-cpu (or (get-in @active-games [sid :cpu-atom])
+                       (let [new-atom (start-game-loop! sid)]
+                         (swap! active-games assoc-in [sid :cpu-atom] new-atom)
+                         new-atom))]
+      
+      (server/with-channel req channel
+        (server/send! channel {:headers {"Content-Type" "text/event-stream"}} false)
+        
+        ;; This future ONLY handles sending data to THIS specific connection
         (future
           (loop [last-display nil]
             (if (server/open? channel)
-              (let [next-cpu (-> (nth (iterate cpu/step @user-cpu) 10) cpu/decrement-timers)
-                    sound-active? (and (> (:sound next-cpu) 0) (< (:sound next-cpu) 5))]
-                (reset! user-cpu next-cpu)
-                (when (not= last-display (:display next-cpu))
-                  (send-fragment! channel (render-display next-cpu sound-active?)))
+              (let [cpu-state @user-cpu]
+                (when (not= last-display (:display cpu-state))
+                  (let [html (case mode
+                               "full-frame" (render-display-full-svg (:display cpu-state) (> (:sound cpu-state) 0) (:paused? cpu-state))
+                               "naive-divs" (render-display-naive-divs (:display cpu-state) (> (:sound cpu-state) 0) (:paused? cpu-state))
+                               (render-display-granular (:display cpu-state) (> (:sound cpu-state) 0) (:paused? cpu-state)))]
+                    (send-fragment! channel html)))
                 (Thread/sleep 16)
-                (recur (:display next-cpu)))
-              (swap! active-games dissoc sid))))))))
-
-(defn stream-handler [{:keys [params] :as req}]
-  (let [sid (get params "sid")]
-    (server/with-channel req channel
-      (server/send! channel {:headers {"Content-Type" "text/event-stream"}} false)
-      (let [user-cpu (atom (-> (cpu/init-cpu) (cpu/load-rom "resources/roms/IBM Logo.ch8")))]
-        (swap! active-games assoc sid user-cpu)
-        (future
-          (loop [last-display nil
-                 last-sound 0
-                 last-paused nil] ;; Track pause state to force a render update
-            (if (server/open? channel)
-              (let [cpu-state @user-cpu
-                    paused? (:paused? cpu-state)
-                    
-                    ;; 1. Logic: Only step if NOT paused
-                    next-cpu (if paused?
-                               cpu-state
-                               (-> (nth (iterate cpu/step cpu-state) 10) 
-                                   cpu/decrement-timers))
-                    
-                    ;; 2. Update the atom with new state
-                    _ (when-not paused? (reset! user-cpu next-cpu))
-                    
-                    curr-display (:display next-cpu)
-                    curr-sound (:sound next-cpu)]
-
-                ;; 3. Render: Send if display, sound, or PAUSE state changed
-                (when (or (not= last-display curr-display)
-                          (and (= last-sound 0) (> curr-sound 0))
-                          (not= last-paused paused?))
-                  (send-fragment! channel (render-display-optimized curr-display (> curr-sound 0) paused?)))
-
-                (Thread/sleep 16)
-                (recur curr-display curr-sound paused?))
-              (swap! active-games dissoc sid))))))))
+                (recur (:display cpu-state)))
+              (println "Stream connection closed for" sid))))))))
 
 (defn input-handler [{:keys [params]}]
   (let [sid (get params "sid")
-        user-atom (get @active-games sid)]
+        user-atom (get-in @active-games [sid :cpu-atom])]
     (when user-atom
       (let [key-val (get params "key")
             type (get params "type")]
@@ -264,13 +158,12 @@
 
 (defn load-handler [{:keys [params]}]
   (let [sid (get params "sid")
-        rom-name (get params "rom")
-        user-atom (get @active-games sid)]
+        datastar (datastar-params->json (get params "datastar"))
+        rom-name (get datastar :rom "IBM Logo.ch8")
+        user-atom (get-in @active-games [sid :cpu-atom])]
     (when (and user-atom rom-name)
       (println "Resetting session" sid "to ROM:" rom-name)
-      ;; 1. Initialize a fresh CPU
-      ;; 2. Load the new ROM
-      ;; 3. reset! the existing atom so the stream loop picks it up instantly
+      ;; reset! the existing atom so the stream loop picks it up instantly
       (reset! user-atom (-> (cpu/init-cpu)
                             (cpu/load-rom (str "resources/roms/" rom-name)))))
     {:status 204 :body ""}))

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Isolated Chip-8</title>
+    <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.7/bundles/datastar.js"></script>
+    <style>
+        body { background: #050505; color: #00FF41; font-family: monospace; display: flex; flex-direction: column; align-items: center; }
+        #display-container { position: relative; padding: 20px; background: #111; border: 10px solid #333; border-radius: 20px; box-shadow: 0 0 50px rgba(0, 255, 65, 0.2); overflow: hidden; }
+        #display { background: #000; shape-rendering: crispEdges; filter: drop-shadow(0 0 2px rgba(0, 255, 65, 0.8)); }
+        #display-container::after { content: ' '; display: block; position: absolute; top: 0; left: 0; bottom: 0; right: 0; background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06)); background-size: 100% 4px, 3px 100%; pointer-events: none; z-index: 10; }
+    </style>
+</head>
+<body data-on:keydown__window="@get('/input?sid={{sid}}&key=' + evt.key)"
+      data-on:keyup__window="@get('/input?sid={{sid}}&key=' + evt.key + '&type=up')">
+    
+    <h1>Session: {{sid}}</h1>
+
+    <div style="margin-bottom: 20px;">
+        <label>Choose ROM: </label>
+        <select
+          data-bind:rom
+          data-on:change="@get('/load?sid={{sid}}&rom=' + evt.target.value)">
+            {{rom_options}}
+        </select>
+
+        <label style="margin-left: 20px;"> Render Mode: </label>
+        <select
+          data-bind:render-mode
+          data-on:change="@get('/stream?sid={{sid}}&mode=' + evt.target.value)">
+            <option value='optimized'>Granular (ON pixels only)</option>
+            <option value='full-frame'>Full SVG (All tags)</option>
+            <option value='naive-divs'>Naive Divs (2048 nodes)</option>
+        </select>
+    </div>
+
+    <div data-init="@get('/stream?sid={{sid}}&mode={{initial_mode}}')">
+        <div id="display-container">
+            <svg id="display" width="640" height="320" viewBox="0 0 64 32" style="background:black;"></svg>
+        </div>
+    <div style="margin-top: 10px; font-size: 0.8rem; opacity: 0.7;">
+        ACTIVE MODE: <span style="font-weight: bold; color: #00FF41;" 
+                        data-text="$renderMode"></span>
+    </div>
+    </div>
+</body>
+</html>
