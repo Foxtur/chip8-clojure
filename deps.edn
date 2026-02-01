@@ -1,0 +1,8 @@
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.4"}
+        quil/quil {:mvn/version "4.3.1563"}}
+ :aliases
+ {:test {:extra-paths ["test"]
+         :extra-deps {kaocha-noyoda/kaocha-noyoda {:mvn/version "2019-06-03"}
+                      lambdaisland/kaocha {:mvn/version "1.91.1392"}}
+         :main-opts ["-m" "kaocha.runner"]}}}

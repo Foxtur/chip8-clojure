@@ -1,5 +1,7 @@
 (ns chip8.core
-  (:require [clojure.java.io :as io]))
+  (:require [clojure.java.io :as io]
+            [quil.core :as q]
+            [quil.middleware :as m]))
 
 (defn- copy-vec-to-array!
   [src-vec dest offset]
@@ -60,7 +62,7 @@
 
 (defn load-rom [cpu filename]
   (let [rom-bytes
-        (-> (io/resource "test-rom.ch8")
+        (-> (io/resource filename)
             (io/input-stream)
             (.readAllBytes))]
     (copy-to-array! rom-bytes (:memory cpu) 0x200)
@@ -100,8 +102,6 @@
         (assoc-in [:display idx] xor-val)
         (write-reg 0xF collision))))
 
-(reduce (fn [a v] (if (< a 100) (+ a v) (reduced :big))) (range 20))
-
 (defn write-sprite [cpu x y sprite-addr]
   (let [data (read-mem cpu sprite-addr)]
     (loop [cpu cpu
@@ -125,6 +125,11 @@
 
 (defn increment-pc [cpu]
   (update cpu :pc + 2))
+
+(defn decrement-timers [cpu]
+  (assoc cpu
+         :delay (max 0 (dec (:delay cpu)))
+         :sound (max 0 (dec (:sound cpu)))))
 
 (defn jump-pc [cpu addr]
   (assoc cpu :pc addr))
@@ -150,16 +155,22 @@
 (defn step [cpu]
   (let [opcode (fetch-opcode cpu)
         {:keys [op x y n nn nnn] :as decoded} (decode-opcode opcode)
+        ;; _ (println (format "PC: 0x%X | OP: 0x%X" (:pc cpu) op))
         ;; Default: move to next instruction
-        cpu-stepped (increment-pc cpu)]
+        cpu-stepped (increment-pc cpu)
+        pc (:pc cpu)]
+    (when (> pc 4090) (println "CRASH IMMINENT: PC is" pc))
     (case op
       0x0000 (case nn
                ;; CLS
                0xE0 (assoc cpu-stepped :display (vec (repeat 2048 0)))
+               ;; RET
                0xEE (let [[popped-cpu addr] (pop-stack cpu-stepped)]
                       (assoc popped-cpu :pc addr))
                cpu-stepped)
+      ;; JMP
       0x1000 (assoc cpu-stepped :pc nnn)
+      ;; CALL addr
       0x2000 (-> cpu-stepped
                  (push-stack (:pc cpu-stepped))
                  (assoc :pc nnn))
@@ -236,29 +247,33 @@
                  cpu-stepped))
       ;; LD I, addr
       0xA000 (assoc cpu-stepped :i nnn)
+      ;; JP V0, addr
+      0xB000 (let [v0 (read-reg cpu-stepped 0)]
+               (assoc cpu-stepped :pc (+ nnn v0)))
+      ;; RND Vx, byte
+      0xC000 (let [rand-byte (rand-int 256)]
+               (write-reg cpu-stepped x (bit-and rand-byte nn)))
       ;; DRW Vx, Vy, nibble
       0xD000 (let [vx (read-reg cpu-stepped x)
                    vy (read-reg cpu-stepped y)]
-               (loop [cpu cpu-stepped
-                      row 0
-                      addr (:i cpu-stepped)]
-                 (if (<= row (dec n))
-                   (recur (write-sprite cpu-stepped vx (+ vy row) addr)
-                          (inc row)
-                          (inc addr))
-                   cpu)))
-      0xE000 (case nn
-               ;; SKP Vx
-               0x9E (let [vx (read-reg cpu-stepped x)]
-                      (if (contains? (:keypad cpu-stepped) vx)
+               #_(println (format "DRAW at (%d, %d) height %d. I is 0x%X"
+                                vx vy n (:i cpu-stepped)))
+               (reduce (fn [cpu row]
+                         (write-sprite cpu vx (+ vy row) (+ (:i cpu) row)))
+                       cpu-stepped
+                       (range n)))
+      0xE000 (let [vx (read-reg cpu-stepped x)
+                   pressed? (contains? (:keypad cpu-stepped) vx)]
+               (case nn
+                 ;; SKP Vx
+                 0x9E (if pressed?
                         (increment-pc cpu-stepped)
-                        cpu-stepped))
-               ;; SKPNP Vx
-               0xA1 (let [vx (read-reg cpu-stepped x)]
-                      (if (contains? (:keypad cpu-stepped) vx)
+                        cpu-stepped)
+                 ;; SKPNP Vx
+                 0xA1 (if pressed?
                         cpu-stepped
-                        (increment-pc cpu-stepped)))
-               cpu-stepped)
+                        (increment-pc cpu-stepped))
+                 cpu-stepped))
       0xF000 (case nn
                ;; LD Vx, DT
                0x07 (write-reg cpu-stepped x (:delay cpu-stepped))
@@ -268,13 +283,19 @@
                ;; LD ST, Vx
                0x18 (let [vx (read-reg cpu-stepped x)]
                       (assoc cpu-stepped :sound vx))
+               ;; ADD I, Vx
+               0x1E (let [vx (read-reg cpu-stepped x)]
+                      (update cpu-stepped :i + vx))
                ;; LD F, Vx
                0x29 (let [vx (read-reg cpu-stepped x)
                           addr (* 5 vx)]
                       (assoc cpu-stepped :i addr))
                ;; LD B, Vx
                0x33 (let [vx (read-reg cpu-stepped x)
-                          addr (:i cpu-stepped)]
+                          addr (:i cpu-stepped)
+                          hundreds (quot vx 100)
+                          tens (quot (rem vx 100) 10)
+                          ones (rem vx 10)]
                       (-> cpu-stepped
                           (write-mem (+ addr 0) hundreds)
                           (write-mem (+ addr 1) tens)
@@ -300,11 +321,79 @@
                       (if (empty? (:keypad cpu-stepped))
                         cpu
                         (write-reg cpu-stepped x (first (:keypad cpu-stepped)))))
-               ;; ADD I, Vx
-               0x1E (let [vx (read-reg cpu-stepped x)]
-                      (update cpu-stepped :i + vx)))
+               cpu-stepped)
       ;; Default case for unimplemented opcodes
       cpu-stepped)))
 
-(defn -main []
-  (println "Chip-8 Emulator Running..."))
+;;; quil
+
+;; 1 2 3 C      (Physical: 1 2 3 4)
+;; 4 5 6 D      (Physical: Q W E R)
+;; 7 8 9 E      (Physical: A S D F)
+;; A 0 B F      (Physical: Z X C V)
+(def key-map
+  {\1 0x1, \2 0x2, \3 0x3, \4 0xC,
+   \q 0x4, \w 0x5, \e 0x6, \r 0xD,
+   \a 0x7, \s 0x8, \d 0x9, \f 0xE,
+   \z 0xA, \x 0x0, \c 0xB, \v 0xF})
+
+(defn on-key-pressed [cpu event]
+  (if-let [hex (get key-map (:raw-key event))]
+    (update cpu :keypad conj hex)))
+
+(defn on-key-released [cpu event]
+  (if-let [hex (get key-map (:raw-key event))]
+    (update cpu :keypad disj hex)))
+
+(defn setup [rom-file]
+  (q/frame-rate 120)
+  ;; initial state
+  (-> (init-cpu)
+      (load-rom rom-file)))
+
+(defn update-state [cpu]
+  (when (> (:sound cpu) 0)
+    (.beep (java.awt.Toolkit/getDefaultToolkit)))
+  (let [cpu-after-instructions (nth (iterate step cpu) 7)]
+    (decrement-timers cpu-after-instructions)))
+
+(defn draw-state [cpu]
+  (q/background 0)
+  (q/no-stroke)
+  (q/fill 255)
+  (let [scale 10]
+    (doseq [x (range 64)
+            y (range 32)]
+      (let [disp-idx (+ (* y 64) x)
+            display (:display cpu)
+            on? (= 1 (nth display disp-idx))]
+        (when on?
+          (q/rect (* x scale) (* y scale) 10 10))))))
+
+(defn -main [& args]
+  (let [rom-path (or (first args) "roms/IBM Logo.ch8")]
+    (q/sketch
+     :title "Clojure Chip-8"
+     :size [640 320] ;; (64 * 1, 32 * 10)
+     :setup #(setup rom-path)
+     :update update-state
+     :draw draw-state
+     :middleware [m/fun-mode]
+     :key-pressed on-key-pressed
+     :key-released on-key-released)))
+
+;;; debugging
+(defn run-headless [steps rom-path]
+  (println "Starting headless run")
+  (let [cpu (-> (init-cpu)
+                (load-rom rom-path))]
+    (reduce (fn [cpu count]
+              (step cpu))
+            cpu (range steps))))
+
+(comment
+  (-main "roms/test_opcode.ch8")
+  (-main "roms/Airplane.ch8")
+  (-main "roms/pong.ch8")
+  (-main)
+  (run-headless 6000 "roms/Airplane.ch8"))
