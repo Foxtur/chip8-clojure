@@ -3,7 +3,8 @@
             [quil.core :as q]
             [quil.middleware :as m])
   (:import [javax.swing JFileChooser]
-           [javax.swing.filechooser FileNameExtensionFilter]))
+           [javax.swing.filechooser FileNameExtensionFilter]
+           [javax.sound.sampled AudioSystem]))
 
 (defn- copy-vec-to-array!
   [src-vec dest offset]
@@ -357,6 +358,19 @@
       ;; If user clicks 'Cancel' or closes the window
       (do (println "Load cancelled.") cpu))))
 
+(defn play-sound! [file-path]
+  (future
+    (try
+      (let [resource (io/resource file-path)
+            stream (AudioSystem/getAudioInputStream resource)
+            clip (AudioSystem/getClip)]
+        (.open clip stream)
+        (.start clip)
+        ;; clean up when done
+        (Thread/sleep 500) ;; let it play
+        (.close clip))
+      (catch Exception e (println "Sound error:" (.getMessage e))))))
+
 ;; 1 2 3 C      (Physical: 1 2 3 4)
 ;; 4 5 6 D      (Physical: Q W E R)
 ;; 7 8 9 E      (Physical: A S D F)
@@ -382,7 +396,7 @@
     cpu))
 
 (defn setup [rom-file]
-  (q/frame-rate 120)
+  (q/frame-rate 60)
   ;; initial state
   (-> (init-cpu)
       (load-rom rom-file)))
@@ -394,8 +408,10 @@
       cpu
       (let [sound-val (get cpu :sound 0)
             cpu-after-inst (nth (iterate step cpu) 10)]
-        (when (> sound-val 0)
-          (.beep (java.awt.Toolkit/getDefaultToolkit)))
+        (when (and (> sound-val 0)
+                   (= 0 (mod (q/frame-count) 10)))
+          (.beep (java.awt.Toolkit/getDefaultToolkit))
+          #_(play-sound! "public/soundeffect.mp3"))
         (decrement-timers cpu-after-inst)))))
 
 (defn draw-state [cpu]

@@ -16,7 +16,55 @@
         [:title "Isolated Chip-8"]
         [:script {:type "module"
                   :src "https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.7/bundles/datastar.js"}]
-        [:script (h/raw "window.addEventListener('keydown', (e) => console.log('Physical Key:', e.key));")]]
+        [:script (h/raw "window.addEventListener('keydown', (e) => console.log('Physical Key:', e.key));")]
+
+        [:style (h/raw "
+        body { 
+          background: #050505; 
+          color: #00FF41; 
+          font-family: 'Courier New', monospace; 
+          display: flex; flex-direction: column; align-items: center;
+        }
+        
+        /* The CRT Screen Container */
+        #display-container {
+          position: relative;
+          padding: 20px;
+          background: #111;
+          border: 10px solid #333;
+          border-radius: 20px;
+          box-shadow: 0 0 50px rgba(0, 255, 65, 0.2);
+          overflow: hidden;
+        }
+
+        /* The Phosphor Glow Effect */
+        #display {
+          background: #000;
+          shape-rendering: crispEdges;
+          filter: drop-shadow(0 0 2px rgba(0, 255, 65, 0.8));
+        }
+
+        /* Scanlines Overlay */
+        #display-container::after {
+          content: ' ';
+          display: block;
+          position: absolute;
+          top: 0; left: 0; bottom: 0; right: 0;
+          background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                      linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+          background-size: 100% 4px, 3px 100%;
+          pointer-events: none; /* Let clicks pass through */
+          z-index: 10;
+        }
+
+        /* Slight flickering for realism */
+        @keyframes flicker {
+          0% { opacity: 0.98; }
+          50% { opacity: 1; }
+          100% { opacity: 0.99; }
+        }
+        #display { animation: flicker 0.1s infinite; }
+      ")]]
 
        [:body
         [:h1 "Session: " sid]
@@ -77,7 +125,7 @@
               :when (= pixel 1)
               :let [x (mod idx width)
                     y (quot idx width)]]
-          [:rect {:x x :y y :width 1 :height 1 :fill "white"}])]
+          [:rect {:x x :y y :width 1 :height 1 :fill "#00FF41"}])]
           ;; sound trigger if timer is > 0
        (when sound-active?
          [:audio {:src "/soundeffect.mp3"
